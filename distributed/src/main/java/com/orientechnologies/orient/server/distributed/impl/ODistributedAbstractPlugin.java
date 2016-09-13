@@ -1329,7 +1329,7 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
       throw OException.wrapException(new ODistributedException("Error on transferring database"), e);
     }
 
-    final ODatabaseDocumentTx db = installDatabaseOnLocalNode(databaseName, dbPath, iNode, fileName, delta,
+    final ODatabaseDocumentInternal db = installDatabaseOnLocalNode(databaseName, dbPath, iNode, fileName, delta,
         uniqueClustersBackupDirectory);
     if (db != null) {
       try {
@@ -1678,7 +1678,7 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
     return chunk.buffer.length;
   }
 
-  protected ODatabaseDocumentTx installDatabaseOnLocalNode(final String databaseName, final String dbPath, final String iNode,
+  protected ODatabaseDocumentInternal installDatabaseOnLocalNode(final String databaseName, final String dbPath, final String iNode,
       final String iDatabaseCompressedFile, final boolean delta, final File uniqueClustersBackupDirectory) {
     ODistributedServerLog.info(this, nodeName, iNode, DIRECTION.IN, "Installing database '%s' to: %s...", databaseName, dbPath);
 
@@ -1687,7 +1687,6 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
       final File fCompleted = new File(iDatabaseCompressedFile + ".completed");
 
       new File(dbPath).mkdirs();
-      final ODatabaseDocumentTx db = new ODatabaseDocumentTx("plocal:" + dbPath);
 
       // USES A CUSTOM WRAPPER OF IS TO WAIT FOR FILE IS WRITTEN (ASYNCH)
       final FileInputStream in = new FileInputStream(f) {
@@ -1743,6 +1742,7 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
         }
       };
 
+      
       try {
         final ODistributedAbstractPlugin me = this;
         executeInDistributedDatabaseLock(databaseName, 0, new OCallable<Void, ODistributedConfiguration>() {
@@ -1751,12 +1751,11 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
             try {
               if (delta) {
 
-                new OIncrementalServerSync().importDelta(serverInstance, db, in, iNode);
+                new OIncrementalServerSync().importDelta(serverInstance, databaseName, in, iNode);
 
               } else {
-
                 // IMPORT FULL DATABASE (LISTENER ONLY FOR DEBUG PURPOSE)
-                db.restore(in, null, new Callable<Object>() {
+                serverInstance.getDatabases().restore(databaseName, in, null, new Callable<Object>() {
                   @Override
                   public Object call() throws Exception {
                     if (uniqueClustersBackupDirectory != null && uniqueClustersBackupDirectory.exists()) {
@@ -1789,11 +1788,13 @@ public abstract class ODistributedAbstractPlugin extends OServerPluginAbstract
       } finally {
         in.close();
       }
-
+      
+      ODatabaseDocumentInternal database = serverInstance.openDatabase(databaseName);
+      
       ODistributedServerLog.info(this, nodeName, null, DIRECTION.NONE, "Installed database '%s' (LSN=%s)", databaseName,
-          ((OAbstractPaginatedStorage) db.getStorage().getUnderlying()).getLSN());
+          ((OAbstractPaginatedStorage) database.getStorage().getUnderlying()).getLSN());
 
-      return db;
+      return database;
 
     } catch (IOException e) {
       ODistributedServerLog.warn(this, nodeName, null, DIRECTION.IN, "Error on copying database '%s' on local server", e,
