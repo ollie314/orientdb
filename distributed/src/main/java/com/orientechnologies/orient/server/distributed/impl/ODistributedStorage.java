@@ -255,11 +255,13 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
 
         if (resultMgmt == OCommandDistributedReplicateRequest.DISTRIBUTED_RESULT_MGMT.MERGE) {
 
-          final Map<String, Collection<String>> nodeClusterMap = dbCfg.getServerClusterMap(involvedClusters, localNodeName);
+          final Map<String, Collection<String>> nodeClusterMap = dbCfg.getServerClusterMap(involvedClusters, localNodeName,
+              exec.isIdempotent());
 
           final Map<String, Object> results;
 
-          if (nodeClusterMap.size() == 1 && nodeClusterMap.keySet().iterator().next().equals(localNodeName)) {
+          if (exec.isIdempotent() && nodeClusterMap.size() == 1
+              && nodeClusterMap.keySet().iterator().next().equals(localNodeName)) {
             // LOCAL NODE, AVOID TO DISTRIBUTE IT
             // CALL IN DEFAULT MODE TO LET OWN COMMAND TO REDISTRIBUTE CHANGES (LIKE INSERT)
             result = wrapped.command(iCommand);
@@ -269,7 +271,7 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
 
           } else {
             // SELECT: SPLIT CLASSES/CLUSTER IF ANY
-            results = executeOnServers(iCommand, involvedClusters, nodeClusterMap);
+            results = executeOnServers(iCommand, exec, involvedClusters, nodeClusterMap);
           }
 
           final OCommandExecutorSQLSelect select = exec instanceof OCommandExecutorSQLSelect ? (OCommandExecutorSQLSelect) exec
@@ -365,8 +367,8 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
     }
   }
 
-  protected Map<String, Object> executeOnServers(final OCommandRequestText iCommand, final Collection<String> involvedClusters,
-      final Map<String, Collection<String>> nodeClusterMap) {
+  protected Map<String, Object> executeOnServers(final OCommandRequestText iCommand, final OCommandExecutor exec,
+      final Collection<String> involvedClusters, final Map<String, Collection<String>> nodeClusterMap) {
 
     final Map<String, Object> results = new HashMap<String, Object>(nodeClusterMap.size());
 
@@ -631,7 +633,7 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
   }
 
   public OStorageOperationResult<ORawBuffer> readRecord(final ORecordId iRecordId, final String iFetchPlan,
-      final boolean iIgnoreCache, final ORecordCallback<ORawBuffer> iCallback) {
+      final boolean iIgnoreCache, final boolean prefetchRecords, final ORecordCallback<ORawBuffer> iCallback) {
 
     try {
       final String clusterName = getClusterNameByRID(iRecordId);
@@ -649,7 +651,7 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
         return (OStorageOperationResult<ORawBuffer>) OScenarioThreadLocal.executeAsDistributed(new Callable() {
           @Override
           public Object call() throws Exception {
-            return wrapped.readRecord(iRecordId, iFetchPlan, iIgnoreCache, iCallback);
+            return wrapped.readRecord(iRecordId, iFetchPlan, iIgnoreCache, prefetchRecords, iCallback);
           }
         });
       }
@@ -1163,10 +1165,10 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
 
   @Override
   public void delete() {
-    wrapped.delete();
-
     if (wrapped instanceof OLocalPaginatedStorage)
       dropStorageFiles();
+
+    wrapped.delete();
   }
 
   @Override
@@ -1798,32 +1800,32 @@ public class ODistributedStorage implements OStorage, OFreezableStorageComponent
     String newClusterName = null;
     if (cls != null) {
       OClusterSelectionStrategy clSel = cls.getClusterSelection();
-      if (!(clSel instanceof OLocalClusterStrategy)) {
+      if (!(clSel instanceof OLocalClusterWrapperStrategy)) {
         dManager.propagateSchemaChanges(db);
         clSel = cls.getClusterSelection();
       }
 
-      if (!(clSel instanceof OLocalClusterStrategy))
+      if (!(clSel instanceof OLocalClusterWrapperStrategy))
         throw new ODistributedException("Cannot install local cluster strategy on class '" + cls.getName() + "'");
 
-      OLogManager.instance().info(this, "Local node '" + localNodeName + "' is not the master for cluster '" + clusterName
+      OLogManager.instance().info(this, "Local node '" + localNodeName + "' is not the owner for cluster '" + clusterName
           + "' (it is '" + ownerNode + "'). Reloading distributed configuration for database '" + getName() + "'");
 
-      dbCfg = ((OLocalClusterStrategy) clSel).readConfiguration();
+      dbCfg = ((OLocalClusterWrapperStrategy) clSel).readConfiguration();
       //
       // newClusterName = getPhysicalClusterNameById(clSel.getCluster(cls, null));
       // ownerNode = dbCfg.getClusterOwner(newClusterName);
 
       // FORCE THE RETRY OF THE OPERATION
       throw new ODistributedConfigurationChangedException(
-          "Local node '" + localNodeName + "' is not the master for cluster '" + clusterName + "' (it is '" + ownerNode + "')");
+          "Local node '" + localNodeName + "' is not the owner for cluster '" + clusterName + "' (it is '" + ownerNode + "')");
     }
 
     if (!ownerNode.equals(localNodeName))
       throw new ODistributedException("Error on inserting into cluster '" + clusterName + "' where local node '" + localNodeName
           + "' is not the master of it, but it is '" + ownerNode + "'");
 
-    OLogManager.instance().info(this, "Local node '" + localNodeName + "' is not the master for cluster '" + clusterName
+    OLogManager.instance().info(this, "Local node '" + localNodeName + "' is not the owner for cluster '" + clusterName
         + "' (it is '" + ownerNode + "'). Switching to a valid cluster of the same class: '" + newClusterName + "'");
 
     // OVERWRITE CLUSTER

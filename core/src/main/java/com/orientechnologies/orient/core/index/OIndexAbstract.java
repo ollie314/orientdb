@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Handles indexing when records change. The underlying lock manager for keys can be the {@link OPartitionedLockManager}, the
@@ -544,55 +545,28 @@ public abstract class OIndexAbstract<T> implements OIndexInternal<T>, OOrientSta
   }
 
   @Override
-  public void lockKeysForUpdateNoTx(Object... key) {
-    final ODatabase database = getDatabase();
-    final boolean txIsActive = database.getTransaction().isActive();
+  public void lockKeysForUpdate(Object... key) {
+    if (key == null || key.length == 0)
+      return;
 
-    if (!txIsActive)
-      keyLockManager.acquireExclusiveLocksInBatch(key);
+    keyLockManager.acquireExclusiveLocksInBatch(key);
   }
 
   @Override
-  public void lockKeysForUpdateNoTx(final Collection<Object> keys) {
+  public Lock[] lockKeysForUpdate(final Collection<Object> keys) {
     if (keys == null || keys.isEmpty())
-      return;
+      return new Lock[0];
 
-    final ODatabase database = getDatabase();
-    final boolean txIsActive = database.getTransaction().isActive();
-
-    if (!txIsActive) {
-      keyLockManager.acquireExclusiveLocksInBatch(keys);
-    }
+    return keyLockManager.acquireExclusiveLocksInBatch(keys);
   }
 
   @Override
-  public void releaseKeysForUpdateNoTx(Object... key) {
-    if (key == null)
+  public void releaseKeysForUpdate(Object... key) {
+    if (key == null || key.length == 0)
       return;
 
-    final ODatabase database = getDatabase();
-    final boolean txIsActive = database.getTransaction().isActive();
-
-    if (!txIsActive) {
-      for (Object k : key) {
-        keyLockManager.releaseExclusiveLock(k);
-      }
-    }
-  }
-
-  @Override
-  public void releaseKeysForUpdateNoTx(final Collection<Object> keys) {
-    if (keys == null || keys.isEmpty())
-      return;
-
-    final ODatabase database = getDatabase();
-    final boolean txIsActive = database.getTransaction().isActive();
-
-    if (!txIsActive) {
-      for (Object k : keys) {
-        keyLockManager.releaseExclusiveLock(k);
-      }
-    }
+    for (Object k : key)
+      keyLockManager.releaseExclusiveLock(k);
   }
 
   public OIndex<T> clear() {
@@ -748,6 +722,7 @@ public abstract class OIndexAbstract<T> implements OIndexInternal<T>, OOrientSta
    * no point in throwing {@link com.orientechnologies.orient.core.storage.ORecordDuplicatedException} while applying index changes.
    *
    * @param changes the changes to interpret.
+   *
    * @return the interpreted index key changes.
    */
   protected Iterable<OTransactionIndexChangesPerKey.OTransactionIndexEntry> interpretTxKeyChanges(

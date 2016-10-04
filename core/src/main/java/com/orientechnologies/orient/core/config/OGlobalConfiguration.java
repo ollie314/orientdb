@@ -435,7 +435,7 @@ public enum OGlobalConfiguration {
   NETWORK_HTTP_MAX_CONTENT_LENGTH("network.http.maxLength", "TCP/IP max content length (in bytes) for HTTP requests", Integer.class,
       1000000, true),
 
-  NETWORK_HTTP_STREAMING("network.http.streaming", "Enable Http chunked streaming for json responses", Boolean.class, true, true),
+  NETWORK_HTTP_STREAMING("network.http.streaming", "Enable Http chunked streaming for json responses", Boolean.class, true, false),
 
   NETWORK_HTTP_CONTENT_CHARSET("network.http.charset", "Http response charset", String.class, "utf-8", true),
 
@@ -449,9 +449,9 @@ public enum OGlobalConfiguration {
 
   NETWORK_HTTP_USE_TOKEN("network.http.useToken", "Enable Token based sessions for http", Boolean.class, false),
 
-  NETWORK_TOKEN_SECRETKEY("network.token.secretyKey", "Network token sercret key", String.class, ""),
+  NETWORK_TOKEN_SECRETKEY("network.token.secretKey", "Network token sercret key", String.class, ""),
 
-  NETWORK_TOKEN_ENCRIPTION_ALGORITHM("network.token.encriptionAlgorithm", "Network token algorithm", String.class, "HmacSHA256"),
+  NETWORK_TOKEN_ENCRYPTION_ALGORITHM("network.token.encryptionAlgorithm", "Network token algorithm", String.class, "HmacSHA256"),
 
   NETWORK_TOKEN_EXPIRE_TIMEOUT("network.token.expireTimeout",
       "Timeout, after which a binary session is considered to have expired (in minutes)", Integer.class, 60),
@@ -715,14 +715,14 @@ public enum OGlobalConfiguration {
    */
   DISTRIBUTED_AUTO_REMOVE_OFFLINE_SERVERS("distributed.autoRemoveOfflineServers",
       "This is the amount of time (in ms) the server has to be OFFLINE, before it is automatically removed from the distributed configuration. -1 = never, 0 = immediately, >0 the actual time to wait",
-      Long.class, -1),
+      Long.class, -1, true),
 
   /**
    * @Since 2.2.0
    */
   DISTRIBUTED_PUBLISH_NODE_STATUS_EVERY("distributed.publishNodeStatusEvery",
       "Time in ms to publish the node status on distributed map. Set to 0 to disable such refresh of node configuration",
-      Long.class, 5000l),
+      Long.class, 5000l, true),
 
   /**
    * @Since 2.2.0

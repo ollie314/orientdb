@@ -363,7 +363,7 @@ public class ODistributedTransactionManager {
       switch (op.type) {
       case ORecordOperation.CREATED:
         // ADD UNDO TASK ONCE YHE RID OS KNOWN
-        undoTasks.add(new ODeleteRecordTask(record));
+        undoTasks.add(new OFixCreateRecordTask(record));
         break;
       }
     }
@@ -576,7 +576,7 @@ public class ODistributedTransactionManager {
               previousRecord.set(txEntry.getRecord());
             else {
               final OStorageOperationResult<ORawBuffer> loadedBuffer = ODatabaseRecordThreadLocal.INSTANCE.get().getStorage()
-                  .getUnderlying().readRecord(rid, null, true, null);
+                  .getUnderlying().readRecord(rid, null, true, false, null);
               if (loadedBuffer != null) {
                 // LOAD THE RECORD FROM THE STORAGE AVOIDING USING THE DB TO GET THE TRANSACTIONAL CHANGES
                 final ORecord loaded = Orient.instance().getRecordFactoryManager().newInstance(loadedBuffer.getResult().recordType);
@@ -595,7 +595,7 @@ public class ODistributedTransactionManager {
           throw new ORecordNotFoundException(rid);
 
         if (op.type == ORecordOperation.UPDATED)
-          undoTask = new OUpdateRecordTask(previousRecord.get(),
+          undoTask = new OFixUpdateRecordTask(previousRecord.get(),
               ORecordVersionHelper.clearRollbackMode(previousRecord.get().getVersion()));
         else
           undoTask = new OResurrectRecordTask(previousRecord.get());
@@ -667,7 +667,7 @@ public class ODistributedTransactionManager {
 
       // if this the the last retry (and it failed), we don't need to wait anymore
       if (autoRetryDelay > 0 && !isLastRetry)
-        Thread.sleep(autoRetryDelay);
+        Thread.sleep(autoRetryDelay / 2 + new Random().nextInt(autoRetryDelay));
 
       // acquireMultipleRecordLocks(iTx, maxAutoRetry, autoRetryDelay, eventListener, ctx);
 

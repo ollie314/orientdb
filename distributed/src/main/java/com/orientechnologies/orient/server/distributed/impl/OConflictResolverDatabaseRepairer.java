@@ -17,7 +17,7 @@
  *  * For more information: http://www.orientechnologies.com
  *
  */
-package com.orientechnologies.orient.server.distributed;
+package com.orientechnologies.orient.server.distributed.impl;
 
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.orient.core.Orient;
@@ -32,13 +32,14 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.storage.ORawBuffer;
 import com.orientechnologies.orient.core.storage.OStorage;
 import com.orientechnologies.orient.core.storage.OStorageOperationResult;
+import com.orientechnologies.orient.server.distributed.*;
 import com.orientechnologies.orient.server.distributed.conflict.ODistributedConflictResolver;
-import com.orientechnologies.orient.server.distributed.impl.ODistributedTransactionManager;
 import com.orientechnologies.orient.server.distributed.impl.task.*;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -48,20 +49,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author Luca Garulli (l.garulli--at--orientdb.com)
  */
 public class OConflictResolverDatabaseRepairer implements ODistributedDatabaseRepairer {
-  private final ODistributedServerManager       dManager;
-  private final String                          databaseName;
+  private final ODistributedServerManager    dManager;
+  private final String                       databaseName;
 
-  private final AtomicLong                      recordProcessed     = new AtomicLong(0);
-  private final AtomicLong                      recordCanceled      = new AtomicLong(0);
-  private final AtomicLong                      totalTimeProcessing = new AtomicLong(0);
-  private final boolean                         active;
+  private final AtomicLong                   recordProcessed     = new AtomicLong(0);
+  private final AtomicLong                   recordCanceled      = new AtomicLong(0);
+  private final AtomicLong                   totalTimeProcessing = new AtomicLong(0);
+  private final boolean                      active;
 
-  private ConcurrentHashMap<ORecordId, Boolean> records             = new ConcurrentHashMap<ORecordId, Boolean>();
-  private ConcurrentHashMap<Integer, Boolean>   clusters            = new ConcurrentHashMap<Integer, Boolean>();
+  private ConcurrentMap<ORecordId, Boolean>  records             = new ConcurrentHashMap<ORecordId, Boolean>();
+  private ConcurrentMap<Integer, Boolean>    clusters            = new ConcurrentHashMap<Integer, Boolean>();
 
-  private final TimerTask                       checkTask;
+  private final TimerTask                    checkTask;
 
-  private List<ODistributedConflictResolver>    conflictResolvers   = new ArrayList<ODistributedConflictResolver>();
+  private List<ODistributedConflictResolver> conflictResolvers   = new ArrayList<ODistributedConflictResolver>();
 
   public OConflictResolverDatabaseRepairer(final ODistributedServerManager manager, final String databaseName) {
     this.dManager = manager;
@@ -330,7 +331,7 @@ public class OConflictResolverDatabaseRepairer implements ODistributedDatabaseRe
 
         for (long pos = remoteEnd + 1; pos <= localEnd; ++pos) {
           final ORecordId rid = new ORecordId(clusterId, pos);
-          final ORawBuffer rawRecord = storage.readRecord(rid, null, true, null).getResult();
+          final ORawBuffer rawRecord = storage.readRecord(rid, null, true, false, null).getResult();
           if (rawRecord == null)
             continue;
 
@@ -359,8 +360,12 @@ public class OConflictResolverDatabaseRepairer implements ODistributedDatabaseRe
               dManager.getNextMessageIdCounter(), ODistributedRequest.EXECUTION_MODE.RESPONSE, null, null);
         }
 
-        ODistributedServerLog.info(this, dManager.getLocalNodeName(), null, ODistributedServerLog.DIRECTION.NONE,
-            "Auto repair aligned %d records of cluster '%s'", task.getTasks().size(), clusterNames.get(0));
+        if (task.getTasks().size() == 0)
+          ODistributedServerLog.debug(this, dManager.getLocalNodeName(), null, ODistributedServerLog.DIRECTION.NONE,
+              "Auto repair aligned %d records of cluster '%s'", task.getTasks().size(), clusterNames.get(0));
+        else
+          ODistributedServerLog.info(this, dManager.getLocalNodeName(), null, ODistributedServerLog.DIRECTION.NONE,
+              "Auto repair aligned %d records of cluster '%s'", task.getTasks().size(), clusterNames.get(0));
       }
     }
 
@@ -402,7 +407,7 @@ public class OConflictResolverDatabaseRepairer implements ODistributedDatabaseRe
         for (ORecordId rid : rids) {
           final OStorageOperationResult<ORawBuffer> res;
           if (rid.clusterPosition > -1)
-            res = db.getStorage().readRecord(rid, null, true, null);
+            res = db.getStorage().readRecord(rid, null, true, false, null);
           else
             res = null;
 
@@ -504,13 +509,13 @@ public class OConflictResolverDatabaseRepairer implements ODistributedDatabaseRe
                         // UPDATE THE RECORD
                         final ORawBuffer winnerRecord = (ORawBuffer) winner;
 
-                        completedTask.addFixTask(new OUpdateRecordTask(rid, winnerRecord.buffer,
+                        completedTask.addFixTask(new OFixUpdateRecordTask(rid, winnerRecord.buffer,
                             ORecordVersionHelper.setRollbackMode(winnerRecord.version), winnerRecord.recordType));
 
                       } else if (winner instanceof ORecordNotFoundException && value instanceof ORawBuffer) {
                         // DELETE THE RECORD
 
-                        completedTask.addFixTask(new ODeleteRecordTask(rid, -1));
+                        completedTask.addFixTask(new OFixCreateRecordTask(rid, -1));
 
                       } else if (value instanceof Throwable) {
                         // MANAGE EXCEPTION

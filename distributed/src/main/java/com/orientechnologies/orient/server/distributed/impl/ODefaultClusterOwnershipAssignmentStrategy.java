@@ -51,8 +51,8 @@ public class ODefaultClusterOwnershipAssignmentStrategy implements OClusterOwner
     if (availableNodes.isEmpty())
       return false;
 
-    if (!(iClass.getClusterSelection() instanceof OLocalClusterStrategy))
-      ((OClassImpl) iClass).setClusterSelectionInternal(new OLocalClusterStrategy(manager, iDatabase.getName(), iClass));
+    if (!(iClass.getClusterSelection() instanceof OLocalClusterWrapperStrategy))
+      ((OClassImpl) iClass).setClusterSelectionInternal(new OLocalClusterWrapperStrategy(manager, iDatabase.getName(), iClass, iClass.getClusterSelection()));
 
     if (iClass.isAbstract())
       return false;
@@ -63,10 +63,12 @@ public class ODefaultClusterOwnershipAssignmentStrategy implements OClusterOwner
     final Set<String> clusterNames = new HashSet<String>(clusterIds.length);
     for (int clusterId : clusterIds) {
       final String clusterName = iDatabase.getClusterNameById(clusterId);
-      clusterNames.add(clusterName);
-      if (clustersToReassign.remove(clusterName))
-        // MOVE THE CLUSTER TO THE REASSIGNMENT FOR THIS CLASS
-        clustersOfClassToReassign.add(clusterName);
+      if( clusterName != null ) {
+        clusterNames.add(clusterName);
+        if (clustersToReassign.remove(clusterName))
+          // MOVE THE CLUSTER TO THE REASSIGNMENT FOR THIS CLASS
+          clustersOfClassToReassign.add(clusterName);
+      }
     }
 
     if (!rebalance && clustersOfClassToReassign.isEmpty())

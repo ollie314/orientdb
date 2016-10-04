@@ -20,29 +20,39 @@
 
 package com.orientechnologies.orient.core.db.record.ridbag.sbtree;
 
-import java.util.UUID;
-
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.orientechnologies.common.concur.resource.OCloseable;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.index.sbtreebonsai.local.OSBTreeBonsai;
 
+import java.util.UUID;
+
 /**
  * @author Artem Orobets (enisher-at-gmail.com)
  */
 public abstract class OSBTreeCollectionManagerAbstract implements OCloseable, OSBTreeCollectionManager {
-  public static final String                                                             FILE_NAME_PREFIX  = "collections_";
-  public static final String                                                             DEFAULT_EXTENSION = ".sbc";
-  protected final int                                                                    evictionThreshold;
-  protected final int                                                                    cacheMaxSize;
-  protected final int                                                                    shift;
-  protected final int                                                                    mask;
-  protected final Object[]                                                               locks;
-  private final ConcurrentLinkedHashMap<OBonsaiCollectionPointer, SBTreeBonsaiContainer> treeCache         = new ConcurrentLinkedHashMap.Builder<OBonsaiCollectionPointer, SBTreeBonsaiContainer>()
-                                                                                                               .maximumWeightedCapacity(
-                                                                                                                   Long.MAX_VALUE)
-                                                                                                               .build();
+  public static final String FILE_NAME_PREFIX  = "collections_";
+  public static final String DEFAULT_EXTENSION = ".sbc";
+
+  /**
+   * Generates a lock name for the given cluster ID.
+   *
+   * @param clusterId the cluster ID to generate the lock name for.
+   *
+   * @return the generated lock name.
+   */
+  public static String generateLockName(int clusterId) {
+    return FILE_NAME_PREFIX + clusterId + DEFAULT_EXTENSION;
+  }
+
+  protected final int      evictionThreshold;
+  protected final int      cacheMaxSize;
+  protected final int      shift;
+  protected final int      mask;
+  protected final Object[] locks;
+  private final ConcurrentLinkedHashMap<OBonsaiCollectionPointer, SBTreeBonsaiContainer> treeCache = new ConcurrentLinkedHashMap.Builder<OBonsaiCollectionPointer, SBTreeBonsaiContainer>()
+      .maximumWeightedCapacity(Long.MAX_VALUE).build();
 
   public OSBTreeCollectionManagerAbstract() {
     this(OGlobalConfiguration.SBTREEBONSAI_LINKBAG_CACHE_EVICTION_SIZE.getValueAsInteger(),
@@ -88,7 +98,8 @@ public abstract class OSBTreeCollectionManagerAbstract implements OCloseable, OS
   public OSBTreeBonsai<OIdentifiable, Integer> loadSBTree(OBonsaiCollectionPointer collectionPointer) {
     final Object lock = treesSubsetLock(collectionPointer);
 
-    OSBTreeBonsai<OIdentifiable, Integer> tree;
+    final OSBTreeBonsai<OIdentifiable, Integer> tree;
+
     synchronized (lock) {
       SBTreeBonsaiContainer container = treeCache.get(collectionPointer);
       if (container != null) {
@@ -106,10 +117,10 @@ public abstract class OSBTreeCollectionManagerAbstract implements OCloseable, OS
         }
       }
 
-
     }
 
-    evict();
+    if (tree != null)
+      evict();
 
     return tree;
   }
@@ -181,7 +192,7 @@ public abstract class OSBTreeCollectionManagerAbstract implements OCloseable, OS
 
   private static final class SBTreeBonsaiContainer {
     private final OSBTreeBonsai<OIdentifiable, Integer> tree;
-    private int                                         usagesCounter = 0;
+    private int usagesCounter = 0;
 
     private SBTreeBonsaiContainer(OSBTreeBonsai<OIdentifiable, Integer> tree) {
       this.tree = tree;

@@ -26,6 +26,7 @@ import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -36,6 +37,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * running distributed because there is no way to
  *
  * @param <T> Type of keys
+ *
  * @author Luca Garulli
  */
 public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
@@ -47,6 +49,7 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
   protected final ConcurrentLinkedHashMap<T, CountableLock> map;
   private final   boolean                                   enabled;
   private final   int                                       amountOfCachedInstances;
+
   private final static Object NULL_KEY = new Object();
 
   @SuppressWarnings("serial")
@@ -75,8 +78,7 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
   @Override
   public Lock acquireSharedLock(final T key) {
-    acquireLock(key, LOCK.SHARED);
-    return null;
+    return acquireLock(key, LOCK.SHARED);
   }
 
   @Override
@@ -86,8 +88,7 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
   @Override
   public Lock acquireExclusiveLock(final T key) {
-    acquireLock(key, LOCK.EXCLUSIVE);
-    return null;
+    return acquireLock(key, LOCK.EXCLUSIVE);
   }
 
   @Override
@@ -95,16 +96,13 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
     releaseLock(Thread.currentThread(), key, LOCK.EXCLUSIVE);
   }
 
-  public void acquireLock(final T iResourceId, final LOCK iLockType) {
-    acquireLock(iResourceId, iLockType, acquireTimeout);
+  public Lock acquireLock(final T iResourceId, final LOCK iLockType) {
+    return acquireLock(iResourceId, iLockType, acquireTimeout);
   }
 
-  public void acquireLock(final T iResourceId, final LOCK iLockType, long iTimeout) {
+  public Lock acquireLock(final T iResourceId, final LOCK iLockType, long iTimeout) {
     if (!enabled)
-      return;
-
-    if (!enabled)
-      return;
+      return null;
 
     T immutableResource = getImmutableResourceId(iResourceId);
     if (immutableResource == null)
@@ -187,6 +185,8 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
               .wrapException(new OLockException("Thread interrupted while waiting for resource '" + iResourceId + "'"), e);
         }
       }
+
+      return new CountableLockWrapper(lock, iLockType == LOCK.SHARED);
     } catch (RuntimeException e) {
       final int usages = lock.countLocks.decrementAndGet();
       if (usages == 0)
@@ -224,9 +224,12 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
     final List<Comparable> comparables = new ArrayList<Comparable>();
 
+    int seenNulls = 0;
     for (T value : values) {
       if (value instanceof Comparable) {
         comparables.add((Comparable) value);
+      } else if (value == null) {
+        ++seenNulls;
       } else {
         throw new IllegalArgumentException(
             "In order to lock value in batch it should implement " + Comparable.class.getName() + " interface");
@@ -235,23 +238,29 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
     Collections.sort(comparables);
 
-    for (Comparable value : comparables) {
-      acquireExclusiveLock((T) value);
-    }
+    final Lock[] locks = new Lock[comparables.size() + seenNulls];
+    int i = 0;
+    for (int j = 0; j < seenNulls; ++j)
+      locks[i++] = acquireExclusiveLock((T) NULL_KEY);
+    for (Comparable value : comparables)
+      locks[i++] = acquireExclusiveLock((T) value);
 
-    return null;
+    return locks;
   }
 
   @Override
-  public void acquireExclusiveLocksInBatch(Collection<T> values) {
+  public Lock[] acquireExclusiveLocksInBatch(Collection<T> values) {
     if (values == null || values.isEmpty())
-      return;
+      return new Lock[0];
 
     final List<Comparable> comparables = new ArrayList<Comparable>();
 
+    int seenNulls = 0;
     for (T value : values) {
       if (value instanceof Comparable) {
         comparables.add((Comparable) value);
+      } else if (value == null) {
+        ++seenNulls;
       } else {
         throw new IllegalArgumentException(
             "In order to lock value in batch it should implement " + Comparable.class.getName() + " interface");
@@ -260,9 +269,14 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
     Collections.sort(comparables);
 
-    for (Comparable value : comparables) {
-      acquireExclusiveLock((T) value);
-    }
+    final Lock[] locks = new Lock[comparables.size() + seenNulls];
+    int i = 0;
+    for (int j = 0; j < seenNulls; ++j)
+      locks[i++] = acquireExclusiveLock((T) NULL_KEY);
+    for (Comparable value : comparables)
+      locks[i++] = acquireExclusiveLock((T) value);
+
+    return locks;
   }
 
   @Override
@@ -290,5 +304,56 @@ public class OOneEntryPerKeyLockManager<T> implements OLockManager<T> {
 
   private static int closestInteger(int value) {
     return 1 << (32 - Integer.numberOfLeadingZeros(value - 1));
+  }
+
+  @SuppressWarnings("NullableProblems")
+  /* internal */ static class CountableLockWrapper implements Lock {
+
+    private final CountableLock countableLock;
+    private final boolean       read;
+
+    public CountableLockWrapper(CountableLock countableLock, boolean read) {
+      this.countableLock = countableLock;
+      this.read = read;
+    }
+
+    /* internal */ int getLockCount() { // for testing purposes
+      return countableLock.countLocks.get();
+    }
+
+    @Override
+    public void lock() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void lockInterruptibly() throws InterruptedException {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean tryLock() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void unlock() {
+      countableLock.countLocks.decrementAndGet();
+
+      if (read)
+        countableLock.readWriteLock.readLock().unlock();
+      else
+        countableLock.readWriteLock.writeLock().unlock();
+    }
+
+    @Override
+    public Condition newCondition() {
+      throw new UnsupportedOperationException();
+    }
   }
 }
