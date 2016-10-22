@@ -23,6 +23,7 @@ import com.orientechnologies.orient.core.db.record.ORecordLazyMultiValue;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.OBlob;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.sql.functions.ODefaultSQLFunctionFactory;
 import com.orientechnologies.orient.core.sql.parser.OIdentifier;
 import com.orientechnologies.orient.core.sql.parser.OProjectionItem;
 import com.orientechnologies.orient.core.sql.parser.OSelectStatement;
@@ -115,11 +116,14 @@ public class OrientJdbcResultSet implements ResultSet {
         OrientSql osql = new OrientSql(new ByteArrayInputStream(statement.sql.getBytes()));
 
         final OSelectStatement select = osql.SelectStatement();
+
         if (select.getProjection() != null) {
 
+          ODefaultSQLFunctionFactory fc = new ODefaultSQLFunctionFactory();
           List<OProjectionItem> items = select.getProjection().getItems();
 
-          for (OProjectionItem item : items)
+          for (OProjectionItem item : items) {
+
             if (!item.isAll()) {
 
               if (item.getAlias() != null) {
@@ -129,18 +133,24 @@ public class OrientJdbcResultSet implements ResultSet {
                 OIdentifier alias = item.getDefaultAlias();
 
                 int underscore = alias.getValue().indexOf('_');
-                if (underscore > 0)
-                  fields.add(alias.getValue().substring(0, underscore));
-                else
+                if (underscore > 0) {
+                  String maybeFunction = alias.getValue().substring(0, underscore);
+                  if (fc.hasFunction(maybeFunction)) {
+                    fields.add(maybeFunction);
+                  } else {
+                    fields.add(alias.getValue());
+                  }
+                } else {
                   fields.add(alias.getValue());
+                }
               }
+
             }
+          }
+          if (fields.size() == 1 && fields.contains("*")) {
 
-        }
-
-        if (fields.size() == 1 && fields.contains("*")) {
-
-          fields.clear();
+            fields.clear();
+          }
         }
       } catch (ParseException e) {
         //NOOP
@@ -574,6 +584,12 @@ public class OrientJdbcResultSet implements ResultSet {
   }
 
   public Object getObject(String columnLabel) throws SQLException {
+    if ("@rid".equals(columnLabel) || "rid".equals(columnLabel)) {
+      return ((ODocument) document.field("rid")).getIdentity().toString();
+    }
+    if ("@class".equals(columnLabel) || "class".equals(columnLabel))
+      return ((ODocument) document.field("rid")).getClassName();
+
     try {
       Object value = document.field(columnLabel);
       if (value == null) {
@@ -659,10 +675,17 @@ public class OrientJdbcResultSet implements ResultSet {
   }
 
   public String getString(String columnLabel) throws SQLException {
-    if ("@rid".equals(columnLabel))
-      return document.getIdentity().toString();
-    if ("@class".equals(columnLabel))
-      return document.getClassName();
+
+    if ("@rid".equals(columnLabel) || "rid".equals(columnLabel)) {
+      return ((ODocument) document.field("rid")).getIdentity().toString();
+    }
+
+    if ("@class".equals(columnLabel) || "class".equals(columnLabel)) {
+      if (document.getClassName() != null)
+        return document.getClassName();
+      return ((ODocument) document.field("rid")).getClassName();
+    }
+
     try {
       return document.field(columnLabel, OType.STRING);
     } catch (Exception e) {

@@ -186,10 +186,10 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
         }
         return res;
       }
-    }, errorMessage);
+    }, errorMessage, connectionRetry);
   }
 
-  public <T> T networkOperation(final OStorageRemoteOperation<T> operation, final String errorMessage) {
+  public <T> T networkOperationRetry(final OStorageRemoteOperation<T> operation, final String errorMessage, int retry) {
     return baseNetworkOperation(new OStorageRemoteOperation<T>() {
       @Override
       public T execute(OChannelBinaryAsynchClient network, OStorageRemoteSession session) throws IOException {
@@ -197,12 +197,19 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
         connectionManager.release(network);
         return res;
       }
-    }, errorMessage);
+    }, errorMessage, retry);
   }
 
-  public <T> T baseNetworkOperation(final OStorageRemoteOperation<T> operation, final String errorMessage) {
-    int retry = connectionRetry;
+  public <T> T networkOperation(final OStorageRemoteOperation<T> operation, final String errorMessage) {
+    return networkOperationRetry(operation, errorMessage, connectionRetry);
+  }
+
+  public <T> T baseNetworkOperation(final OStorageRemoteOperation<T> operation, final String errorMessage, int retry) {
     OStorageRemoteSession session = getCurrentSession();
+    if (session.commandExecuting)
+      throw new ODatabaseException(
+          "Cannot execute the request because an asynchronous operation is in progress. Please use a different connection");
+
     do {
       OChannelBinaryAsynchClient network = null;
       String serverUrl = getNextAvailableServerURL(false, session);
@@ -382,7 +389,7 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
           } finally {
             endResponse(network);
           }
-          configuration.load(new HashMap<String,Object>());
+          configuration.load(new HashMap<String, Object>());
           return null;
         } finally {
           stateLock.releaseWriteLock();
@@ -1130,7 +1137,7 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
       @Override
       public Object execute(final OChannelBinaryAsynchClient network, OStorageRemoteSession session) throws IOException {
         Object result = null;
-        getCurrentSession().commandExecuting = true;
+        session.commandExecuting = true;
         try {
 
           final boolean asynch = iCommand instanceof OCommandRequestAsynch && ((OCommandRequestAsynch) iCommand).isAsynchronous();
@@ -1203,7 +1210,7 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
             endResponse(network);
           }
         } finally {
-          getCurrentSession().commandExecuting = false;
+          session.commandExecuting = false;
           if (iCommand.getResultListener() != null && !live)
             iCommand.getResultListener().end();
         }
@@ -1993,16 +2000,16 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
     else if (host.split(":").length < 2 || host.split(":")[1].trim().length() == 0)
       host += (clientConfiguration.getValueAsBoolean(OGlobalConfiguration.CLIENT_USE_SSL) ? getDefaultSSLPort() : getDefaultPort());
 
-// DISABLED BECAUSE THIS DID NOT ALLOW TO CONNECT TO LOCAL HOST ANYMORE IF THE SERVER IS BOUND TO 127.0.0.1
-// CONVERT 127.0.0.1 TO THE PUBLIC IP IF POSSIBLE
-//    if (host.startsWith(LOCAL_IP)) {
-//      try {
-//        final String publicIP = InetAddress.getLocalHost().getHostAddress();
-//        host = publicIP + host.substring(LOCAL_IP.length());
-//      } catch (UnknownHostException e) {
-//        // IGNORE IT
-//      }
-//    }
+    // DISABLED BECAUSE THIS DID NOT ALLOW TO CONNECT TO LOCAL HOST ANYMORE IF THE SERVER IS BOUND TO 127.0.0.1
+    // CONVERT 127.0.0.1 TO THE PUBLIC IP IF POSSIBLE
+    // if (host.startsWith(LOCAL_IP)) {
+    // try {
+    // final String publicIP = InetAddress.getLocalHost().getHostAddress();
+    // host = publicIP + host.substring(LOCAL_IP.length());
+    // } catch (UnknownHostException e) {
+    // // IGNORE IT
+    // }
+    // }
 
     synchronized (serverURLs) {
       if (!serverURLs.contains(host)) {
@@ -2025,8 +2032,7 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
   /**
    * Acquire a network channel from the pool. Don't lock the write stream since the connection usage is exclusive.
    *
-   * @param iCommand
-   *          id. Ids described at {@link OChannelBinaryProtocol}
+   * @param iCommand id. Ids described at {@link OChannelBinaryProtocol}
    * @param session
    * @return connection to server
    * @throws IOException
@@ -2371,7 +2377,7 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
 
   public void importDatabase(final String options, final InputStream inputStream, final String name,
       final OCommandOutputListener listener) {
-    networkOperation(new OStorageRemoteOperation<Void>() {
+    networkOperationRetry(new OStorageRemoteOperation<Void>() {
       @Override
       public Void execute(OChannelBinaryAsynchClient network, OStorageRemoteSession session) throws IOException {
         try {
@@ -2388,7 +2394,11 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
           endRequest(network);
         }
 
+        int timeout = network.getSocketTimeout();
         try {
+          // Import messages are sent while import is running, using the request timeout instead of message timeout to avoid early
+          // reading interrupt.
+          network.setSocketTimeout(OGlobalConfiguration.NETWORK_REQUEST_TIMEOUT.getValueAsInteger());
           beginResponse(network, session);
           String message;
           while ((message = network.readString()) != null) {
@@ -2396,10 +2406,11 @@ public class OStorageRemote extends OStorageAbstract implements OStorageProxy {
           }
         } finally {
           endResponse(network);
+          network.setSocketTimeout(timeout);
         }
         return null;
       }
-    }, "Error sending import request");
+    }, "Error sending import request", 0);
   }
 
 }

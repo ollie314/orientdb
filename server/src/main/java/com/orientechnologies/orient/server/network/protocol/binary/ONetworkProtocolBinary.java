@@ -2014,7 +2014,10 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
     beginResponse();
     try {
       sendOk(connection, clientTxId);
-      channel.writeBytes(iResponse != null ? iResponse.toStream() : null);
+      byte[] bytes = null;
+      if (iResponse != null)
+        bytes = getRecordBytes(connection, iResponse);
+      channel.writeBytes(bytes);
     } finally {
       endResponse(connection);
     }
@@ -2843,14 +2846,17 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
     beginResponse();
     sendOk(connection, clientTxId);
     try {
+      OLogManager.instance().info(this, "Starting database import");
       ODatabaseImport imp = new ODatabaseImport(connection.getDatabase(), file.getAbsolutePath(), new OCommandOutputListener() {
         @Override
         public void onMessage(String iText) {
           try {
+            OLogManager.instance().debug(ONetworkProtocolBinary.this, iText);
             if (iText != null)
               channel.writeString(iText);
           } catch (IOException e) {
-            e.printStackTrace();
+            OLogManager.instance().warn(ONetworkProtocolBinary.this, "Error sending import message \"%s\" to client", iText);
+            OLogManager.instance().debug(ONetworkProtocolBinary.this, "Error sending import message ", e);
           }
         }
       });
@@ -2860,6 +2866,7 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
       file.delete();
       channel.writeString(null);
     } finally {
+      OLogManager.instance().info(this, "Database import finshed");
       endResponse(connection);
     }
 
